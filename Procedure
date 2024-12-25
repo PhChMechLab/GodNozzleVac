@@ -1,0 +1,178 @@
+procedure FanP(v0:extended;vst,pst,ust:extended; var p,u,dp,du:extended; marker:word; z:integer);//+++
+begin
+  P:=Q(v0,vst,pst,0);
+  u:=ust+z*Integral(vst,v0,vst,pst,marker);
+
+  dP:=Q(v0,vst,pst,1);
+  du:=z*sqrt(-dP)
+end;
+
+procedure ShockP(v0:extended; vst,pst,ust:extended; var p,u,dp,du:extended;marker:word; z:integer);
+begin
+  P:=P_RH(v0,vst,pst,0);
+  u:=ust-z*sign(vst-v0)*sqrt(-(v0-vst)*(P-pst));
+
+  dP:=P_RH(v0,vst,pst,1);
+  du:=-z*sign(vst-v0)*0.5/sqrt(-(v0-vst)*(p-pst))*(-(p-pst)-(v0-vst)*dP)
+end;
+
+procedure Godunov;
+var
+  eps,dx:extended;
+  Pnew,Pold:extended;
+  i:integer;
+begin
+  dx:=1/(N-1);
+  for i := 0 to N-1 do
+  begin
+    x[i]:=-0.5+dx/2+dx*i;
+  end;
+
+  g:=1.4;
+  gp2:=(g+1)/2;
+  gm2:=(g-1)/2;
+
+  pL:=0.1; roL:=0.125; uL:=0;
+  pR:=1; roR:=1; uR:=0;
+  cL:=sqrt(g*(pL+p0)/roL);
+  cR:=sqrt(g*(pR+p0)/roR);
+
+  p0:=0;
+  //shock wave speed
+  uS:=FP(max(pL,pR),pL,roL,cL,pR,roR,cR);//   (pR-pL)/sqrt(roL*(gp2*(pR+p0)+gm2*(pL+p0)));
+  //fan wave speed
+  uF:=FP(min(pL,pR),pL,roL,cL,pR,roR,cR);//-cR/gm2*(1-power((pL+p0)/(pR+p0),gm2/g));
+  //vakuum speed
+  uV:=FP(-p0,pL,roL,cL,pR,roR,cR);;//-(cL+cR)/gm2;
+
+  for i := 0 to N-1 do
+  begin
+    if x[i]<0 then
+    begin
+      pressure[i]:=pL;
+      density[i]:=roL;
+      velocity[i]:=uL;
+    end
+    else
+    begin
+      pressure[i]:=pR;
+      density[i]:=roR;
+      velocity[i]:=uR;
+    end;
+  end;
+
+  Plot(Sender);
+
+  // solution structure
+  if pL<=pR then
+  begin
+    if (uL-uR) > uS then
+    begin
+      toLeft := shock;
+      toRight := shock;
+    end
+    else
+    if ((uL-uR) > uF) and ((uL-uR)<uS) then
+    begin
+      toLeft := shock;
+      toRight := fan;
+    end
+    else
+    if ((uL-uR) > uV) and ((uL-uR)<uF) then
+    begin
+      toLeft := fan;
+      toRight := fan;
+    end
+    else
+    if (uL-uR)<uV then
+    begin
+      toLeft := vak;
+      toRight := vak;
+    end;
+  end//p1<=p2
+  else
+  begin
+    if (uL-uR) > uS then
+    begin
+      toLeft := shock;
+      toRight := shock;
+    end
+    else
+    if ((uL-uR) > uF) and ((uL-uR) < uS) then
+    begin
+      toLeft := fan;
+      toRight := shock;
+    end
+    else
+    if ((uL-uR) > uV) and ((uL-uR)<uF) then
+    begin
+      toLeft := fan;
+      toRight := fan;
+    end
+    else
+    if (uL-uR)<uV then
+    begin
+      toLeft := vak;
+      toRight := vak;
+    end;
+
+  end;//p1>p2
+
+  //initial value for Nuton procedure
+  //for intersection point definition
+  Pold:=(pL*roR*cR+pR*roL*cL+(uL-uR)*roL*cL*roR*cR)/(roL*cL+roR*cR);
+  repeat
+    Pnew:=Pold-(f(Pold,pL,roL,cL)+f(Pold,pR,roR,cR)-(uL-uR))/(df(Pold,pL,roL,cL)+df(Pold,pR,roR,cR));
+    eps:=abs(Pnew-Pold);
+    Pold:=Pnew
+  until eps<1e-6;
+
+  P00:=Pnew;
+
+  // definition main values for solution construction
+  //it depends of shock or fan structure of the solution
+  case toLeft of
+    shock: begin
+             //масовая скорость звука для левой УВ
+             aL:=sqrt(roL*(gp2*(P00+p0)+gm2*(pL+p0)));//+++++
+             U00:=uL-(P00-pL)/aL;//+++++скорость промежуточного состояния
+             D00L:=uL-aL/roL;//+++++скорость левой характеристики из левого состояния
+             D00Lz:=D00L;//скорость правой характеристики из промежуточного состояния
+             R00L:=aL/(U00-D00L);//+++++плотность промежуточного состояния слева
+           end;
+    fan:   begin
+             //масовая скорость звука для левой ВР
+             aL:=gm2/g*roL*cL*(1-(P00+p0)/(pL+p0))/(1-power((P00+p0)/(pL+p0),gm2/g));//+++++
+             U00:=uL-(P00-pL)/aL;//+++++скорость промежуточного состояния
+             D00L:=uL-cL;//+++++скорость левой характеристики из левого состояния
+             cz:=cL+gm2*(uL-U00);//+++++
+             D00Lz:=U00-cz;//+++++скорость левой характеристики из промежуточного состояния
+             R00L:=g*(P00+p0)/sqr(cz);//+++++плотность промежуточного состояния слева
+           end;
+    vak:   begin
+
+           end;
+  end;
+
+  case toRight of
+    shock: begin
+             //масовая скорость звука для правой УВ
+             aR:=sqrt(roR*(gp2*(P00+p0)+gm2*(pR+p0)));//+++++
+             U00:=uR+(P00-pR)/aR;//+++++скорость промежуточного состояния
+             D00R:=uR+aR/roR;//+++++скорость правой характеристики из правого состояния
+             D00Rz:=D00R;//скорость левой характеристики из промежуточного состояния
+             R00R:=aR/(D00R-U00);//+++++плотность промежуточного состояния справа
+           end;
+    fan:   begin
+             //масовая скорость звука для правой ВР
+             aR:=gm2/g*roR*cR*(1-(P00+p0)/(pR+p0))/(1-power((P00+p0)/(pR+p0),gm2/g));//+++++
+             U00:=uR+(P00-pR)/aR;//+++++скорость промежуточного состояния
+             D00R:=uR+cR;//+++++скорость правой характеристики из правого состояния
+             cz:=cR-gm2*(uR-U00);//+++++
+             D00Rz:=U00+cz;//+++++скорость правой характеристики из промежуточного состояния
+             R00R:=g*(P00+p0)/sqr(cz);//+++++плотность промежуточного состояния справа
+           end;
+    vak:   begin
+
+           end;
+  end;
